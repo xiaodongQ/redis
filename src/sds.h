@@ -48,10 +48,16 @@ struct __attribute__ ((__packed__)) sdshdr5 {
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
     char buf[];
 };
+
+// sds类型头(其中包括了数据buf，数组指针)，下面定义的几个sdshdr类型，根据对齐的长度进行不同类型区分
 struct __attribute__ ((__packed__)) sdshdr8 {
+    // 已使用长度
     uint8_t len; /* used */
+    // 分配的总长度(排除头和结束符外的总长度)
     uint8_t alloc; /* excluding the header and null terminator */
+    // 类型，3个低bit位表示类型，5位没使用
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
+    // 具体存放字符的buf
     char buf[];
 };
 struct __attribute__ ((__packed__)) sdshdr16 {
@@ -81,11 +87,16 @@ struct __attribute__ ((__packed__)) sdshdr64 {
 #define SDS_TYPE_MASK 7
 #define SDS_TYPE_BITS 3
 #define SDS_HDR_VAR(T,s) struct sdshdr##T *sh = (void*)((s)-(sizeof(struct sdshdr##T)));
+// 偏移前一个 sdshdrxx 类型长度
 #define SDS_HDR(T,s) ((struct sdshdr##T *)((s)-(sizeof(struct sdshdr##T))))
 #define SDS_TYPE_5_LEN(f) ((f)>>SDS_TYPE_BITS)
 
+// 返回sds类型的长度，内联函数，static内部使用
+// sds类型typedef定义为 char*，函数中通过标志位区分类型
 static inline size_t sdslen(const sds s) {
+    // sds类型取前一个成员，即前一个char，对应的是 sdshdrxx 结构中的flags字段(unsigned char flags)
     unsigned char flags = s[-1];
+    // flags & 111
     switch(flags&SDS_TYPE_MASK) {
         case SDS_TYPE_5:
             return SDS_TYPE_5_LEN(flags);
