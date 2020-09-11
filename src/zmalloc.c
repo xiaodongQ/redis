@@ -71,7 +71,9 @@ void zlibc_free(void *ptr) {
 #define dallocx(ptr,flags) je_dallocx(ptr,flags)
 #endif
 
+// 增加已使用的内存大小(全局变量used_memory中保存)，atomicIncr里面加锁更新，保持原子操作
 #define update_zmalloc_stat_alloc(__n) atomicIncr(used_memory,(__n))
+// 减少已使用内存大小
 #define update_zmalloc_stat_free(__n) atomicDecr(used_memory,(__n))
 
 static size_t used_memory = 0;
@@ -87,6 +89,7 @@ static void zmalloc_default_oom(size_t size) {
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
 void *zmalloc(size_t size) {
+    // 多申请一个 PREFIX_SIZE 大小(一个size_t类型的大小)的空间，用于保存要请求申请的空间
     void *ptr = malloc(size+PREFIX_SIZE);
 
     if (!ptr) zmalloc_oom_handler(size);
@@ -96,6 +99,7 @@ void *zmalloc(size_t size) {
 #else
     *((size_t*)ptr) = size;
     update_zmalloc_stat_alloc(size+PREFIX_SIZE);
+    // 返回时跳过 size_t类型大小 的长度
     return (char*)ptr+PREFIX_SIZE;
 #endif
 }
