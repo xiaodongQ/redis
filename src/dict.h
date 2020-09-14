@@ -84,7 +84,7 @@ typedef struct dictht {
     unsigned long size;
     // size-1 用于计算hash值应该存放的位置 (hash & sizemask)
     unsigned long sizemask;
-    // 已使用的字典数量
+    // 已使用的实体数量(键值对，冲突的键值对算多个)
     unsigned long used;
 } dictht;
 
@@ -94,7 +94,7 @@ typedef struct dict {
     dictType *type;
     // 私有数据指针
     void *privdata;
-    // 2个哈希表，用于渐进式rehash
+    // 2个哈希表结构，用于渐进式rehash
     dictht ht[2];
     // rehash时的下标 -1时表示未在进行rehash
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
@@ -124,7 +124,7 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 // 扫描桶
 typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
-// 初始化哈希表的数目
+// 初始化哈希表的槽数目
 /* This is the initial size of every hash table */
 #define DICT_HT_INITIAL_SIZE     4
 
@@ -177,18 +177,36 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
 /* API */
+// 为了和里面新旧两个哈希表区分，此处总类都叫做字典
+//创建dict字典总类(包含新旧两个哈希表)
 dict *dictCreate(dictType *type, void *privDataPtr);
+// 字典扩缩容
 int dictExpand(dict *d, unsigned long size);
+// 字典新增键值对，key已存在则返回 DICT_ERR(值为1)
 int dictAdd(dict *d, void *key, void *val);
+// 添加一个字典实体(键值对，dictEntry*)，但是不设置值，而是返回这个键值对结构，由用户自己来设置值
+// 如果key存在则会返回NULL，并把已存在的键值对放到existing中返回；如果key不存在则返回键值对供用户操作
 dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing);
+// 添加一个字典实体，dictAddRaw的简要版本，若key存在则返回已存在的key，不存在则会新增
 dictEntry *dictAddOrFind(dict *d, void *key);
+// 添加或者覆盖键值对，若为覆盖则原来的val空间会被释放
 int dictReplace(dict *d, void *key, void *val);
+// 查找并移除指定key的元素(键值对)，辅助函数(dictDelete()和dictUnlink()中会调用)
+// 找到后移除并返回节点指针，并根据nofree标志区分是否不进行空间释放(若释放则返回的是空悬指针)；没找到则返回NULL
 int dictDelete(dict *d, const void *key);
+// 从字典中移除一个元素，不过不释放空间(key、value、字典实体都不释放)
+// 返回值会返回这个节点实体，后续可通过dictFreeUnlinkedEntry(entry)释放这个字典实体的空间
+// 当我们想要从哈希表中删除某些内容，但又想在实际删除条目之前使用其值时，这个函数非常有用
 dictEntry *dictUnlink(dict *ht, const void *key);
+// 释放指定实体的空间(key、value、实体都进行释放)
 void dictFreeUnlinkedEntry(dict *d, dictEntry *he);
+// 释放字典空间(释放两个哈希表和私有数据空间，并释放该字典指针)
 void dictRelease(dict *d);
+// 查找key对应的键值对实体
 dictEntry * dictFind(dict *d, const void *key);
+// key对应的value
 void *dictFetchValue(dict *d, const void *key);
+// 调整哈希表，用最少的值容纳所有的字典集合
 int dictResize(dict *d);
 dictIterator *dictGetIterator(dict *d);
 dictIterator *dictGetSafeIterator(dict *d);
@@ -203,7 +221,10 @@ uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len);
 void dictEmpty(dict *d, void(callback)(void*));
 void dictEnableResize(void);
 void dictDisableResize(void);
+// 渐进式rehash，把旧表映射到新表，分成n步进行
+// 返回1表示还有数据(key或者说key对应的桶)需要从旧表移动到新表，0表示没有
 int dictRehash(dict *d, int n);
+// 在给定时间内，循环执行rehash，每次100步
 int dictRehashMilliseconds(dict *d, int ms);
 void dictSetHashFunctionSeed(uint8_t *seed);
 uint8_t *dictGetHashFunctionSeed(void);

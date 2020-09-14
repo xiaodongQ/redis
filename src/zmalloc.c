@@ -88,6 +88,7 @@ static void zmalloc_default_oom(size_t size) {
 
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
+// 申请空间，会在size空间前面多申请一个表示大小的空间，不过返回的指针指向的是size大小内容的空间
 void *zmalloc(size_t size) {
     // 多申请一个 PREFIX_SIZE 大小(一个size_t类型的大小)的空间，用于保存要请求申请的空间
     void *ptr = malloc(size+PREFIX_SIZE);
@@ -97,6 +98,7 @@ void *zmalloc(size_t size) {
     update_zmalloc_stat_alloc(zmalloc_size(ptr));
     return ptr;
 #else
+    // 多申请保存大小的空间 其中存的是请求指定申请的大小，并不加上本额外空间大小
     *((size_t*)ptr) = size;
     update_zmalloc_stat_alloc(size+PREFIX_SIZE);
     // 返回时跳过 size_t类型大小 的长度
@@ -173,19 +175,24 @@ void *zrealloc(void *ptr, size_t size) {
  * malloc itself, given that in that case we store a header with this
  * information as the first bytes of every allocation. */
 #ifndef HAVE_MALLOC_SIZE
+// 返回给定指针实际分配的总空间大小(包括额外保存数据大小的空间，和对齐补齐的空间)
 size_t zmalloc_size(void *ptr) {
     void *realptr = (char*)ptr-PREFIX_SIZE;
     size_t size = *((size_t*)realptr);
     /* Assume at least that all the allocations are padded at sizeof(long) by
      * the underlying allocator. */
+    // 假设以sizeof(long)的长度对齐补齐，则实际大小需加上对齐补齐填充的空间大小
     if (size&(sizeof(long)-1)) size += sizeof(long)-(size&(sizeof(long)-1));
+    // 加上前面表示长度的空间大小
     return size+PREFIX_SIZE;
 }
+// 要使用的数据空间大小(不加上前面的长度空间大小)
 size_t zmalloc_usable(void *ptr) {
     return zmalloc_size(ptr)-PREFIX_SIZE;
 }
 #endif
 
+// 释放空间，由于申请时多申请一个表示大小的空间，所以释放时指针往前偏移同样长度，然后free
 void zfree(void *ptr) {
 #ifndef HAVE_MALLOC_SIZE
     void *realptr;
@@ -198,7 +205,9 @@ void zfree(void *ptr) {
     free(ptr);
 #else
     realptr = (char*)ptr-PREFIX_SIZE;
+    // 表示的大小 并不包含该用于存放大小 的内存大小
     oldsize = *((size_t*)realptr);
+    // 所以释放空间大小为 数据大小 + 用于存放长度的空间大小(sizeof(size_t))
     update_zmalloc_stat_free(oldsize+PREFIX_SIZE);
     free(realptr);
 #endif

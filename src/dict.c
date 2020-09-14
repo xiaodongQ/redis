@@ -107,10 +107,12 @@ static void _dictReset(dictht *ht)
     ht->used = 0;
 }
 
+// 创建一个字典总类(里面包含新旧两个哈希表，都叫容易混淆，此处自己叫字典总类吧)
 /* Create a new hash table */
 dict *dictCreate(dictType *type,
         void *privDataPtr)
 {
+    // 这种用法没见过，d定义时就能同时使用？
     dict *d = zmalloc(sizeof(*d));
 
     _dictInit(d,type,privDataPtr);
@@ -148,7 +150,8 @@ int dictResize(dict *d)
     return dictExpand(d, minimal);
 }
 
-// 哈希表扩容或者缩容，size是实体个数，而不是字节大小
+// 哈希表扩容或者缩容，size是实体个数(槽个数)，而不是字节大小
+// 扩缩容时新的哈希表都放在第二个表中(除了第一次初始化放在第一个哈希表中)
 /* Expand or create the hash table */
 int dictExpand(dict *d, unsigned long size)
 {
@@ -274,7 +277,7 @@ long long timeInMilliseconds(void) {
     return (((long long)tv.tv_sec)*1000)+(tv.tv_usec/1000);
 }
 
-// 在给定时间内，循环执行rehash
+// 在给定时间内，循环执行rehash，每次100步
 /* Rehash for an amount of time between ms milliseconds and ms+1 milliseconds */
 int dictRehashMilliseconds(dict *d, int ms) {
     // iterators 标识了正在使用的迭代器个数，类比STL，如果迭代器在使用的同时进行rehash，可能造成迭代器失效
@@ -294,7 +297,7 @@ int dictRehashMilliseconds(dict *d, int ms) {
     return rehashes;
 }
 
-// 没有迭代器使用时，进行一步rehash(若迭代器正在使用过程中，则rehash可能造成部分元素丢失或者重复)
+// 没有迭代器使用时，进行一步rehash(因为若迭代器正在使用过程中rehash，则rehash可能造成部分元素丢失或者重复)
 // 这个函数会在普通的查询或者更新哈希表操作时被调用，以便哈希表自动迁移
 /* This function performs just a step of rehashing, and only if there are
  * no safe iterators bound to our hash table. When we have iterators in the
@@ -374,6 +377,7 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
  * Return 1 if the key was added from scratch, 0 if there was already an
  * element with such key and dictReplace() just performed a value update
  * operation. */
+// 添加或者覆盖键值对，若为覆盖则原来的val空间会被释放
 int dictReplace(dict *d, void *key, void *val)
 {
     dictEntry *entry, *existing, auxentry;
@@ -392,7 +396,9 @@ int dictReplace(dict *d, void *key, void *val)
      * you want to increment (set), and then decrement (free), and not the
      * reverse. */
     auxentry = *existing;
+    // 设置val，若为复杂结构则根据具体的valDup进行复制
     dictSetVal(d, existing, val);
+    // 把原来的val空间释放
     dictFreeVal(d, &auxentry);
     return 0;
 }
@@ -404,12 +410,15 @@ int dictReplace(dict *d, void *key, void *val)
  * existing key is returned.)
  *
  * See dictAddRaw() for more information. */
+// 添加一个字典实体，dictAddRaw的简要版本，若key存在则返回已存在的key，不存在则会新增
 dictEntry *dictAddOrFind(dict *d, void *key) {
     dictEntry *entry, *existing;
     entry = dictAddRaw(d,key,&existing);
     return entry ? entry : existing;
 }
 
+// 查找并移除指定key的元素(键值对)，辅助函数(dictDelete()和dictUnlink()中会调用)
+// 找到后移除并返回节点指针，并根据 nofree 标志区分是否不进行空间释放(若释放则返回的是空悬指针)；没找到则返回NULL
 /* Search and remove an element. This is an helper function for
  * dictDelete() and dictUnlink(), please check the top comment
  * of those functions. */
@@ -418,35 +427,47 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     dictEntry *he, *prevHe;
     int table;
 
+    // 两个哈希表已使用的键值对都为0，则不需要继续判断，直接退出
     if (d->ht[0].used == 0 && d->ht[1].used == 0) return NULL;
 
+    // 正在rehash时，删除元素也进行一步操作，渐进式rehash分摊在各个操作(键值对添加、删除、查找)中
     if (dictIsRehashing(d)) _dictRehashStep(d);
+    // 对key进行hash计算，哈希函数由对应字典类型提供
     h = dictHashKey(d, key);
 
     for (table = 0; table <= 1; table++) {
+        // 先找到该key对应的槽(对key进行hash后和sizemask按位于)
         idx = h & d->ht[table].sizemask;
         he = d->ht[table].table[idx];
         prevHe = NULL;
         while(he) {
+            // 找到这个key则进行移除，链表操作 prev指向要删除节点的next
             if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 /* Unlink the element from the list */
                 if (prevHe)
                     prevHe->next = he->next;
                 else
                     d->ht[table].table[idx] = he->next;
+                // nofree 为非0则指定不释放空间
                 if (!nofree) {
+                    // nofree为false，则释放空间
                     dictFreeKey(d, he);
                     dictFreeVal(d, he);
+                    // zfree并不把he置NULL
                     zfree(he);
                 }
                 d->ht[table].used--;
+                // 返回该key对应的节点指针，若上面释放了空间，则此处he为空悬指针(指向已经销毁的对象或已经回收的地址)
                 return he;
             }
+            // 没找到则继续遍历链表
             prevHe = he;
             he = he->next;
         }
+        // 没有在rehash则操作第一个哈希表即可，若在则要从两个哈希表中都移除该key
         if (!dictIsRehashing(d)) break;
     }
+    // 没有找到则会返回NULL
     return NULL; /* not found */
 }
 
@@ -477,10 +498,15 @@ int dictDelete(dict *ht, const void *key) {
  * // Do something with entry
  * dictFreeUnlinkedEntry(entry); // <- This does not need to lookup again.
  */
+// 从字典中移除一个元素，不过不释放空间(key、value、字典实体都不释放)
+// 返回值会返回这个节点实体，后续可通过dictFreeUnlinkedEntry(entry)释放这个字典实体的空间
+// 当我们想要从哈希表中删除某些内容，但又想在实际删除条目之前使用其值时，这个函数非常有用
 dictEntry *dictUnlink(dict *ht, const void *key) {
+    // nofree 送1，表示移除该节点后不释放空间
     return dictGenericDelete(ht,key,1);
 }
 
+// 释放指定实体的空间(key、value、实体都进行释放)
 /* You need to call this function to really free the entry after a call
  * to dictUnlink(). It's safe to call this function with 'he' = NULL. */
 void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
@@ -490,6 +516,7 @@ void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
     zfree(he);
 }
 
+// 清理整个哈希表(用于新或老哈希表)，callback用于清理私有数据(只有第一个哈希表才会操作释放私有数据)
 /* Destroy an entire dictionary */
 int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
     unsigned long i;
@@ -498,25 +525,35 @@ int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
     for (i = 0; i < ht->size && ht->used > 0; i++) {
         dictEntry *he, *nextHe;
 
+        // 65535 16位全1，i==0才会执行该语句块
         if (callback && (i & 65535) == 0) callback(d->privdata);
 
+        // 槽为空则跳过
         if ((he = ht->table[i]) == NULL) continue;
+        // 槽不为空，则该槽中链式节点都进行清理和空间释放
         while(he) {
+            // 用于链表遍历操作，提前保存
             nextHe = he->next;
+            // 用对应方法清理key内存
             dictFreeKey(d, he);
+            // 用对应方法清理val内存
             dictFreeVal(d, he);
+            // 释放槽中该字典实体的节点空间
             zfree(he);
             ht->used--;
             he = nextHe;
         }
     }
+    // 释放字典实体指针table
     /* Free the table and the allocated cache structure */
     zfree(ht->table);
+    // 重新初始化哈希表
     /* Re-initialize the table */
     _dictReset(ht);
     return DICT_OK; /* never fails */
 }
 
+// 释放字典空间(释放两个哈希表和私有数据空间，并释放该字典指针)
 /* Clear & Release the hash table */
 void dictRelease(dict *d)
 {
@@ -525,12 +562,14 @@ void dictRelease(dict *d)
     zfree(d);
 }
 
+// 查找key对应的键值对实体
 dictEntry *dictFind(dict *d, const void *key)
 {
     dictEntry *he;
     uint64_t h, idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
+    // 查找时也进行一步rehash
     if (dictIsRehashing(d)) _dictRehashStep(d);
     h = dictHashKey(d, key);
     for (table = 0; table <= 1; table++) {
@@ -1040,6 +1079,7 @@ static unsigned long _dictNextPower(unsigned long size)
 
 // 返回一个空闲槽的索引，该空闲槽可以用给定“键”的哈希条目填充
 // 如果key已经存在，则返回-1，并把已存在的键值对放到existing出参中
+// 如果正在rehash，则每次返回的是第二个哈希表的内容(新表)
 /* Returns the index of a free slot that can be populated with
  * a hash entry for the given 'key'.
  * If the key already exists, -1 is returned
@@ -1053,25 +1093,34 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     dictEntry *he;
     if (existing) *existing = NULL;
 
+    // 获取前先检查是否进行扩缩容，若需扩缩容但执行失败，则返回失败
     /* Expand the hash table if needed */
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
+    // 两个哈希表
     for (table = 0; table <= 1; table++) {
+        // 传入的hash值 在哈希表中的位置
         idx = hash & d->ht[table].sizemask;
+        // 根据上面的位置取字典实体
         /* Search if this slot does not already contain the given key */
         he = d->ht[table].table[idx];
+        // he不为NULL则表示该hash值(hash值相同不一定代表key相同)原来就存在于哈希表
         while(he) {
+            // 比较key是否相等，判断传入的key(而不是hash值)是否已存在
             if (key==he->key || dictCompareKeys(d, key, he->key)) {
                 if (existing) *existing = he;
                 return -1;
             }
+            // 不是相同的key，则说明是哈希冲突，即不同key进行hash后hash值相同，继续判断链表下一个节点
             he = he->next;
         }
+        // 不在rehash则break循环，使用第一个哈希表(老表)的位置
         if (!dictIsRehashing(d)) break;
     }
     return idx;
 }
 
+// 通过传入的回调函数指针，用该函数来清理哈希表
 void dictEmpty(dict *d, void(callback)(void*)) {
     _dictClear(d,&d->ht[0],callback);
     _dictClear(d,&d->ht[1],callback);
