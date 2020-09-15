@@ -150,7 +150,7 @@ int dictResize(dict *d)
     return dictExpand(d, minimal);
 }
 
-// 哈希表扩容或者缩容，size是实体个数(槽个数)，而不是字节大小
+// 哈希表扩容或者缩容，size是实体个数(桶个数)，而不是字节大小
 // 扩缩容时新的哈希表都放在第二个表中(除了第一次初始化放在第一个哈希表中)
 /* Expand or create the hash table */
 int dictExpand(dict *d, unsigned long size)
@@ -162,7 +162,7 @@ int dictExpand(dict *d, unsigned long size)
 
     // 新的哈希表
     dictht n; /* the new hash table */
-    // 获取size对应的下一个2^n值，如7对应8 (即槽个数)
+    // 获取size对应的下一个2^n值，如7对应8 (即桶个数)
     unsigned long realsize = _dictNextPower(size);
 
     // 要重新分配(rehash)的大小和原来一样，则退出
@@ -436,7 +436,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
     h = dictHashKey(d, key);
 
     for (table = 0; table <= 1; table++) {
-        // 先找到该key对应的槽(对key进行hash后和sizemask按位于)
+        // 先找到该key对应的桶(对key进行hash后和sizemask按位于)
         idx = h & d->ht[table].sizemask;
         he = d->ht[table].table[idx];
         prevHe = NULL;
@@ -528,9 +528,9 @@ int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
         // 65535 16位全1，i==0才会执行该语句块
         if (callback && (i & 65535) == 0) callback(d->privdata);
 
-        // 槽为空则跳过
+        // 桶为空则跳过
         if ((he = ht->table[i]) == NULL) continue;
-        // 槽不为空，则该槽中链式节点都进行清理和空间释放
+        // 桶不为空，则该桶中链式节点都进行清理和空间释放
         while(he) {
             // 用于链表遍历操作，提前保存
             nextHe = he->next;
@@ -538,7 +538,7 @@ int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
             dictFreeKey(d, he);
             // 用对应方法清理val内存
             dictFreeVal(d, he);
-            // 释放槽中该字典实体的节点空间
+            // 释放桶中该字典实体的节点空间
             zfree(he);
             ht->used--;
             he = nextHe;
@@ -1046,7 +1046,7 @@ static int _dictExpandIfNeeded(dict *d)
     /* Incremental rehashing already in progress. Return. */
     if (dictIsRehashing(d)) return DICT_OK;
 
-    // 如果哈希表为空，则初始化为4个槽
+    // 如果哈希表为空，则初始化为4个桶
     /* If the hash table is empty expand it to the initial size. */
     if (d->ht[0].size == 0) return dictExpand(d, DICT_HT_INITIAL_SIZE);
 
@@ -1056,7 +1056,7 @@ static int _dictExpandIfNeeded(dict *d)
      * the number of buckets. */
     if (d->ht[0].used >= d->ht[0].size &&
         (dict_can_resize ||
-         d->ht[0].used/d->ht[0].size > dict_force_resize_ratio)) // 字典节点个数 / 总槽数，即装载因子
+         d->ht[0].used/d->ht[0].size > dict_force_resize_ratio)) // 字典节点个数 / 总桶数，即装载因子
     {
         return dictExpand(d, d->ht[0].used*2);
     }
@@ -1077,7 +1077,7 @@ static unsigned long _dictNextPower(unsigned long size)
     }
 }
 
-// 返回一个空闲槽的索引，该空闲槽可以用给定“键”的哈希条目填充
+// 返回一个空闲桶的索引，该空闲桶可以用给定“键”的哈希条目填充
 // 如果key已经存在，则返回-1，并把已存在的键值对放到existing出参中
 // 如果正在rehash，则每次返回的是第二个哈希表的内容(新表)
 /* Returns the index of a free slot that can be populated with

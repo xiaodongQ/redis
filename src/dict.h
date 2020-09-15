@@ -80,7 +80,7 @@ typedef struct dictType {
 typedef struct dictht {
     // 字典实体，dictEntry* 为一个键值数据指针，二级指针指向 键值数据指针构成的 连续内存，每个成员可能为NULL，表示没有key或者删除了原有成员
     dictEntry **table;
-    // 槽数量
+    // 桶数量
     unsigned long size;
     // size-1 用于计算hash值应该存放的位置 (hash & sizemask)
     unsigned long sizemask;
@@ -124,7 +124,7 @@ typedef void (dictScanFunction)(void *privdata, const dictEntry *de);
 // 扫描桶
 typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
-// 初始化哈希表的槽数目
+// 初始化哈希表的桶数目
 /* This is the initial size of every hash table */
 #define DICT_HT_INITIAL_SIZE     4
 
