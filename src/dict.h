@@ -54,7 +54,7 @@ typedef struct dictEntry {
         int64_t s64;
         double d;
     } v;
-    //下一字典结点
+    //下一字典实体节点
     struct dictEntry *next;
 } dictEntry;
 
@@ -78,7 +78,7 @@ typedef struct dictType {
 /* This is our hash table structure. Every dictionary has two of this as we
  * implement incremental rehashing, for the old to the new table. */
 typedef struct dictht {
-    // 字典实体，dictEntry* 为一个键值数据指针，二级指针指向 键值数据指针构成的 连续内存，每个成员可能为NULL，表示没有key或者删除了原有成员
+    // 字典实体，连续的桶，哈希表扩缩容时会申请指定个数的桶(桶中又包含一条链用于表示哈希冲突的key)
     dictEntry **table;
     // 桶数量
     unsigned long size;
@@ -96,13 +96,14 @@ typedef struct dict {
     void *privdata;
     // 2个哈希表结构，用于渐进式rehash
     dictht ht[2];
-    // rehash时的下标 -1时表示未在进行rehash
+    // rehash时要操作的下一个桶的下标 -1时表示未在进行rehash
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    // 当前迭代器数量 类比STL，如果迭代器在使用的同时进行rehash，可能造成迭代器失效
+    // 当前使用的迭代器数量 类比STL，如果迭代器在使用的同时进行rehash，可能造成迭代器失效
     unsigned long iterators; /* number of iterators currently running */
 } dict;
 
-// 字典迭代器
+// 字典迭代器，safe为1表示安全迭代器，即使在迭代时也可以调用dictAdd, dictFind和其他操作函数
+// safe为0表示迭代器是非安全的，在迭代时只能调用dictNext
 /* If safe is set to 1 this is a safe iterator, that means, you can call
  * dictAdd, dictFind, and other functions against the dictionary even while
  * iterating. Otherwise it is a non safe iterator, and only dictNext()
@@ -110,9 +111,12 @@ typedef struct dict {
 typedef struct dictIterator {
     // 当前字典
     dict *d;
+    // 指向的桶下标，-1表示未指向任何桶
     long index;
+    // table标识用哪个哈希表(0还是1)；safe标识本迭代器是安全还是不安全的
     int table, safe;
-    // 字典实体
+    // 迭代器指向的实体(键值对，而不是桶指针，是桶里面的链迭代之后)
+    // 如果 entry 是NULL，则说明指向的是空桶
     dictEntry *entry, *nextEntry;
     // 指纹标记，避免不安全的迭代器滥用现象
     /* unsafe iterator fingerprint for misuse detection. */
@@ -172,7 +176,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 #define dictGetSignedIntegerVal(he) ((he)->v.s64)
 #define dictGetUnsignedIntegerVal(he) ((he)->v.u64)
 #define dictGetDoubleVal(he) ((he)->v.d)
-#define dictSlots(d) ((d)->ht[0].size+(d)->ht[1].size)
+#define dictSlots(d) ((d)->ht[0].size+(d)->ht[1].size) // 字典的总桶数(新旧两个表加起来)
 #define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
@@ -206,14 +210,21 @@ void dictRelease(dict *d);
 dictEntry * dictFind(dict *d, const void *key);
 // key对应的value
 void *dictFetchValue(dict *d, const void *key);
-// 调整哈希表，用最少的值容纳所有的字典集合
+// 调整哈希表大小，每个元素用一个桶存储(没有冲突，使装载因子接近1)
 int dictResize(dict *d);
+// 获取一个不安全(safe为0)的字典迭代器(申请一个dictIterator类型大小，zmalloc申请时都会在前面多申请一个放长度大小的空间)
 dictIterator *dictGetIterator(dict *d);
+// 获取一个安全的字典迭代器
 dictIterator *dictGetSafeIterator(dict *d);
+// 返回迭代器指向的下一个实体指针(如果当前迭代器指向空桶，则会找下一个非空的桶，返回其第一个实体)
 dictEntry *dictNext(dictIterator *iter);
+// 释放迭代器
 void dictReleaseIterator(dictIterator *iter);
+// 返回一个随机实体，在实现随机算法时比较有用
 dictEntry *dictGetRandomKey(dict *d);
+// 和dictGetRandomKey类似，返回一个随机实体，不过它更公平(dictGetRandomKey中先获取随机桶再获取桶里随机节点，不过不同链长度概率不同)
 dictEntry *dictGetFairRandomKey(dict *d);
+// 从字典中返回一些(count指定数量)随机的实体，保存在des中(二级指针，用来表示实体指针的数组)
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
 void dictGetStats(char *buf, size_t bufsize, dict *d);
 uint64_t dictGenHashFunction(const void *key, int len);

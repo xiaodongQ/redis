@@ -88,7 +88,7 @@ static void zmalloc_default_oom(size_t size) {
 
 static void (*zmalloc_oom_handler)(size_t) = zmalloc_default_oom;
 
-// 申请空间，会在size空间前面多申请一个表示大小的空间，不过返回的指针指向的是size大小内容的空间
+// 申请空间，会在size空间前面多申请一个表示大小的空间，这个空间中存的大小不包含这部分空间，返回的指针指向的也是size大小内容的内容空间
 void *zmalloc(size_t size) {
     // 多申请一个 PREFIX_SIZE 大小(一个size_t类型的大小)的空间，用于保存要请求申请的空间
     void *ptr = malloc(size+PREFIX_SIZE);

@@ -134,7 +134,7 @@ int _dictInit(dict *d, dictType *type,
     return DICT_OK;
 }
 
-// 调整哈希表，用最少的值容纳所有的字典集合
+// 调整哈希表大小，每个元素用一个桶存储(没有冲突，使装载因子接近1)
 /* Resize the table to the minimal size that contains all the elements,
  * but with the invariant of a USED/BUCKETS ratio near to <= 1 */
 int dictResize(dict *d)
@@ -592,6 +592,8 @@ void *dictFetchValue(dict *d, const void *key) {
     return he ? dictGetVal(he) : NULL;
 }
 
+// 计算字典指纹(返回一个64位的整数)，反映当前字典的状态，使用字典中的一些属性进行异或操作计算得到
+// 如果迭代器是不安全的，则需要检查字典指纹是否一样，不一样则禁止迭代操作
 /* A fingerprint is a 64 bit number that represents the state of the dictionary
  * at a given time, it's just a few dict properties xored together.
  * When an unsafe iterator is initialized, we get the dict fingerprint, and check
@@ -616,6 +618,9 @@ long long dictFingerprint(dict *d) {
      *
      * This way the same set of integers in a different order will (likely) hash
      * to a different number. */
+    // 计算int类型的hash code，使用hash算法：Tomas Wang's 64 bit integer hash
+        // [几种常见的hash函数](https://www.jianshu.com/p/bb64cd7593ab)
+        // [Integer Hash Function](http://web.archive.org/web/20071223173210/http://www.concentric.net/~Ttwang/tech/inthash.htm)
     for (j = 0; j < 6; j++) {
         hash += integers[j];
         /* For the hashing step we use Tomas Wang's 64 bit integer hash. */
@@ -630,6 +635,7 @@ long long dictFingerprint(dict *d) {
     return hash;
 }
 
+// 获取一个不安全(safe为0)的字典迭代器(申请一个dictIterator类型大小，zmalloc申请时都会在前面多申请一个放长度大小的空间)
 dictIterator *dictGetIterator(dict *d)
 {
     dictIterator *iter = zmalloc(sizeof(*iter));
@@ -643,6 +649,7 @@ dictIterator *dictGetIterator(dict *d)
     return iter;
 }
 
+// 获取一个安全的字典迭代器
 dictIterator *dictGetSafeIterator(dict *d) {
     dictIterator *i = dictGetIterator(d);
 
@@ -650,34 +657,48 @@ dictIterator *dictGetSafeIterator(dict *d) {
     return i;
 }
 
+// 返回迭代器指向的下一个实体指针(如果当前迭代器指向空桶，则会找下一个非空的桶，返回其第一个实体)
 dictEntry *dictNext(dictIterator *iter)
 {
     while (1) {
+        // 传入迭代器指向的实体为空，说明是空桶
         if (iter->entry == NULL) {
+            // 定义指针 指向table标识的哈希表(0-旧 1-新)
             dictht *ht = &iter->d->ht[iter->table];
+            // 旧哈希表
             if (iter->index == -1 && iter->table == 0) {
                 if (iter->safe)
-                    iter->d->iterators++;
+                    iter->d->iterators++; // 若是安全迭代器，则字典中正使用的迭代器数量加1
                 else
-                    iter->fingerprint = dictFingerprint(iter->d);
+                    iter->fingerprint = dictFingerprint(iter->d); // 计算当前字典的指纹，更新到迭代器中，不安全的迭代器并不更新使用数量
             }
+            // 桶 索引加1 (当前指向的实体是空，说明是空桶)
             iter->index++;
+            // 超过桶总数了
             if (iter->index >= (long) ht->size) {
+                // 若正在rehash且迭代器指向旧哈希表
                 if (dictIsRehashing(iter->d) && iter->table == 0) {
+                    // 把迭代器中的哈希表 改成 新的哈希表
                     iter->table++;
+                    // 索引指向第1个位置(下标为0，若没有使用则下标为-1)
                     iter->index = 0;
+                    // 指针指向也改成新哈希表
                     ht = &iter->d->ht[1];
                 } else {
+                    // 如果没有在rehash，则退出while，并返回NULL
                     break;
                 }
             }
+            // 新索引(原索引++之后)对应的实体(此处由于是下一个桶的第一个实体，所以和桶的指针是重合的)，更新到 迭代器指向的实体
             iter->entry = ht->table[iter->index];
         } else {
+            // 如果不是空桶，则直接更新下一个实体即可(nextEntry指向的是键值对实体，而不是桶)
             iter->entry = iter->nextEntry;
         }
         if (iter->entry) {
             /* We need to save the 'next' here, the iterator user
              * may delete the entry we are returning. */
+            // 更新下一个实体指针(键值对结构中的next，指向桶里面的链表下一个成员)
             iter->nextEntry = iter->entry->next;
             return iter->entry;
         }
@@ -685,17 +706,21 @@ dictEntry *dictNext(dictIterator *iter)
     return NULL;
 }
 
+// 释放迭代器
 void dictReleaseIterator(dictIterator *iter)
 {
+
     if (!(iter->index == -1 && iter->table == 0)) {
         if (iter->safe)
-            iter->d->iterators--;
+            iter->d->iterators--; // 如果是安全迭代器，则将正使用的迭代器数量 减1
         else
-            assert(iter->fingerprint == dictFingerprint(iter->d));
+            assert(iter->fingerprint == dictFingerprint(iter->d)); // 非安全迭代器，需要当前计算的指纹和之前一样，否则退出
     }
+    // 释放迭代器内存
     zfree(iter);
 }
 
+// 返回一个随机实体，在实现随机算法时比较有用
 /* Return a random entry from the hash table. Useful to
  * implement randomized algorithms */
 dictEntry *dictGetRandomKey(dict *d)
@@ -705,8 +730,11 @@ dictEntry *dictGetRandomKey(dict *d)
     int listlen, listele;
 
     if (dictSize(d) == 0) return NULL;
+    // 进行一步rehash
     if (dictIsRehashing(d)) _dictRehashStep(d);
+    // 找一个非空的桶
     if (dictIsRehashing(d)) {
+        // 如果在rehash，则随机桶是从 旧表的rehashidx 到 新表的结束 之间返回
         do {
             /* We are sure there are no elements in indexes from 0
              * to rehashidx-1 */
@@ -725,6 +753,7 @@ dictEntry *dictGetRandomKey(dict *d)
      * list and we need to get a random element from the list.
      * The only sane way to do so is counting the elements and
      * select a random index. */
+    // 从非空的桶里返回一个随机的节点(先遍历计算总的节点数，再生成随机位置，返回对应实体节点)
     listlen = 0;
     orighe = he;
     while(he) {
@@ -759,6 +788,7 @@ dictEntry *dictGetRandomKey(dict *d)
  * of continuous elements to run some kind of algorithm or to produce
  * statistics. However the function is much faster than dictGetRandomKey()
  * at producing N elements. */
+// 从字典中返回一些(count指定数量)随机的实体，保存在des中(二级指针，用来表示实体指针的数组)
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
     unsigned long j; /* internal hash table id, 0 or 1. */
     unsigned long tables; /* 1 or 2 tables? */
@@ -839,6 +869,7 @@ unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count) {
  * that may be constituted of N buckets with chains of different lengths
  * appearing one after the other. Then we report a random element in the range.
  * In this way we smooth away the problem of different chain lenghts. */
+// 和dictGetRandomKey类似，返回一个随机实体，不过它更公平(dictGetRandomKey中先获取随机桶再获取桶里随机节点，不过不同链长度概率不同)
 #define GETFAIR_NUM_ENTRIES 15
 dictEntry *dictGetFairRandomKey(dict *d) {
     dictEntry *entries[GETFAIR_NUM_ENTRIES];
@@ -1169,11 +1200,16 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 
 #define DICT_STATS_VECTLEN 50
 size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
+    // slots 非空桶的个数
+    // maxchainlen 单个桶中包含实体的最大个数(链的最大长度)
     unsigned long i, slots = 0, chainlen, maxchainlen = 0;
+    // 总的实体个数
     unsigned long totchainlen = 0;
+    // 用来记录 不同链长度各自对应的桶个数，如下标为0的值表示实体个数为0的桶有多少个
     unsigned long clvector[DICT_STATS_VECTLEN];
     size_t l = 0;
 
+    // 实体数量为0
     if (ht->used == 0) {
         return snprintf(buf,bufsize,
             "No stats available for empty dictionaries\n");
@@ -1181,23 +1217,30 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
 
     /* Compute stats. */
     for (i = 0; i < DICT_STATS_VECTLEN; i++) clvector[i] = 0;
+    // 遍历所有桶
     for (i = 0; i < ht->size; i++) {
         dictEntry *he;
 
         if (ht->table[i] == NULL) {
+            // 空桶数量+1
             clvector[0]++;
             continue;
         }
+        // 非空桶数量+1
         slots++;
         /* For each hash entry on this slot... */
+        // 这个桶中的实体个数(冲突链长度)
         chainlen = 0;
         he = ht->table[i];
         while(he) {
             chainlen++;
             he = he->next;
         }
+        // 如果实体个数>=50，则都算到下标为49的个数中
         clvector[(chainlen < DICT_STATS_VECTLEN) ? chainlen : (DICT_STATS_VECTLEN-1)]++;
+        // 更新单个桶中包含实体的最大个数(链的最大长度)
         if (chainlen > maxchainlen) maxchainlen = chainlen;
+        // 总的实体个数
         totchainlen += chainlen;
     }
 
@@ -1208,8 +1251,8 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
         " number of elements: %ld\n"
         " different slots: %ld\n"
         " max chain length: %ld\n"
-        " avg chain length (counted): %.02f\n"
-        " avg chain length (computed): %.02f\n"
+        " avg chain length (counted): %.02f\n"  // 平均每个非空桶的实体数量(用叠加计算出的总实体个数计算)
+        " avg chain length (computed): %.02f\n" // 平均每个非空桶的实体数量(用哈希表中的used计算)
         " Chain length distribution:\n",
         tableid, (tableid == 0) ? "main hash table" : "rehashing target",
         ht->size, ht->used, slots, maxchainlen,
@@ -1218,6 +1261,7 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
         if (clvector[i] == 0) continue;
         if (l >= bufsize) break;
+        // 不同链长度 对应的桶个数
         l += snprintf(buf+l,bufsize-l,
             "   %s%ld: %ld (%.02f%%)\n",
             (i == DICT_STATS_VECTLEN-1)?">= ":"",
