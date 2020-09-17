@@ -59,6 +59,8 @@
  * Note that even when dict_can_resize is set to 0, not all resizes are
  * prevented: a hash table is still allowed to grow if the ratio between
  * the number of elements and the buckets > dict_force_resize_ratio. */
+// 是否允许调整大小，1为可以
+// 注意：即使设置为0也不是所有调整大小都不允许，实体个数/桶个数 > 强制resize的比率 则也会进行resize进行扩容
 static int dict_can_resize = 1;
 static unsigned int dict_force_resize_ratio = 5;
 
@@ -73,6 +75,7 @@ static int _dictInit(dict *ht, dictType *type, void *privDataPtr);
 
 static uint8_t dict_hash_function_seed[16];
 
+// 设置hash seed
 void dictSetHashFunctionSeed(uint8_t *seed) {
     memcpy(dict_hash_function_seed,seed,sizeof(dict_hash_function_seed));
 }
@@ -87,10 +90,13 @@ uint8_t *dictGetHashFunctionSeed(void) {
 uint64_t siphash(const uint8_t *in, const size_t inlen, const uint8_t *k);
 uint64_t siphash_nocase(const uint8_t *in, const size_t inlen, const uint8_t *k);
 
+// 对key进行siphash
 uint64_t dictGenHashFunction(const void *key, int len) {
+    // 用 siphash 算法计算哈希
     return siphash(key,len,dict_hash_function_seed);
 }
 
+// 对key进行siphash，key的字符都变为小写再计算
 uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len) {
     return siphash_nocase(buf,len,dict_hash_function_seed);
 }
@@ -516,7 +522,7 @@ void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
     zfree(he);
 }
 
-// 清理整个哈希表(用于新或老哈希表)，callback用于清理私有数据(只有第一个哈希表才会操作释放私有数据)
+// 清理整个哈希表内存(用于新或老哈希表)，callback用于清理私有数据(只有第一个哈希表才会操作释放私有数据)
 /* Destroy an entire dictionary */
 int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
     unsigned long i;
@@ -906,7 +912,7 @@ static unsigned long rev(unsigned long v) {
  *
  * The function guarantees all elements present in the
  * dictionary get returned between the start and end of the iteration.
- * However it is possible some elements get returned multiple times.
+ * However it is possible some elements get returned multiple times. 部分元素可能返回多次
  *
  * For every element returned, the callback argument 'fn' is
  * called with 'privdata' as first argument and the dictionary entry
@@ -914,12 +920,14 @@ static unsigned long rev(unsigned long v) {
  *
  * HOW IT WORKS.
  *
+ * 主要的想法是 递增一个游标(cursor)
  * The iteration algorithm was designed by Pieter Noordhuis.
  * The main idea is to increment a cursor starting from the higher order
  * bits. That is, instead of incrementing the cursor normally, the bits
  * of the cursor are reversed, then the cursor is incremented, and finally
  * the bits are reversed again.
  *
+ * 需要这个策略是因为哈希表在遍历时可能会 resize
  * This strategy is needed because the hash table may be resized between
  * iteration calls.
  *
@@ -979,6 +987,23 @@ static unsigned long rev(unsigned long v) {
  * 3) The reverse cursor is somewhat hard to understand at first, but this
  *    comment is supposed to help.
  */
+// 遍历字典的所有元素
+/*
+ * 该算法使用游标 cursor 来遍历字典，关于cursor可以看上面的注释
+ * cursor的演变是采用了reverse binary iteration方法，也就是每次是向cursor的最高位加1，并向低位方向进位
+ * 比如1101的下一个数是0011，因为1101的前三个数为110，最高位加1，并且向低位进位就是001，所以最终得到0011
+ *  高位加1后，若要进位，则向低位进位，而不是往高位进位
+ * 
+ * 在Redis中，字典的哈希表长度始终为2的n次方。因此m0(sizemask)始终是一个低n位全为1，其余为全为0的数
+ * 整个计算过程，都是在v的低n位数中进行的，比如长度为16的哈希表，则n=4，因此v是从0到15这几个数之间的转换
+ * 
+ * 计算一个哈希表节点索引的方法是hashkey&mask，其中，mask的值永远是哈希表大小减1
+ * 哈希表长度为8，则mask为111，因此，节点的索引值就取决于hashkey的低三位
+ * 
+ * 算法比较复杂，先mark。。
+ * 
+ * 可参考[Redis源码解析：04字典的遍历dictScan](https://blog.csdn.net/gqtcgq/article/details/50533336)
+*/
 unsigned long dictScan(dict *d,
                        unsigned long v,
                        dictScanFunction *fn,
@@ -989,30 +1014,40 @@ unsigned long dictScan(dict *d,
     const dictEntry *de, *next;
     unsigned long m0, m1;
 
+    // 总实体数为0则说明返回
     if (dictSize(d) == 0) return 0;
 
     /* Having a safe iterator means no rehashing can happen, see _dictRehashStep.
      * This is needed in case the scan callback tries to do dictFind or alike. */
+    // 使用安全迭代器数量+1，该数量>0时不能进行rehash渐进操作(为0再进行每步渐进rehash)
     d->iterators++;
 
     if (!dictIsRehashing(d)) {
+        // 没有在rehash则直接用旧哈希表
         t0 = &(d->ht[0]);
         m0 = t0->sizemask;
 
         /* Emit entries at cursor */
+        // bucketfn 为传入的遍历桶的函数指针
+        // v 为哈希值? 计算得到当前哈希值所在的桶位置
         if (bucketfn) bucketfn(privdata, &t0->table[v & m0]);
+        // 桶位置
         de = t0->table[v & m0];
+        // 遍历桶对应的链表节点
         while (de) {
             next = de->next;
+            // fn 为传入的字典遍历函数指针
             fn(privdata, de);
             de = next;
         }
 
+        // 用于保留v的低n位数(m0的低n位都是1，取反变为 110000 形式(假设低4位))，其余位全置为1
         /* Set unmasked bits so incrementing the reversed cursor
          * operates on the masked bits */
         v |= ~m0;
 
         /* Increment the reverse cursor */
+        // rev函数用来对无符号整数进行二进制位的翻转
         v = rev(v);
         v++;
         v = rev(v);
@@ -1062,6 +1097,7 @@ unsigned long dictScan(dict *d,
     }
 
     /* undo the ++ at the top */
+    // 使用完安全迭代器，进行-1
     d->iterators--;
 
     return v;
@@ -1151,14 +1187,16 @@ static long _dictKeyIndex(dict *d, const void *key, uint64_t hash, dictEntry **e
     return idx;
 }
 
-// 通过传入的回调函数指针，用该函数来清理哈希表
+// 清理字典，传入的回调函数指针用来清理私有数据
 void dictEmpty(dict *d, void(callback)(void*)) {
+    // 清理整个哈希表内存(用于新或老哈希表)，callback用于清理私有数据(只有第一个哈希表才会操作释放私有数据)
     _dictClear(d,&d->ht[0],callback);
     _dictClear(d,&d->ht[1],callback);
     d->rehashidx = -1;
     d->iterators = 0;
 }
 
+// 设置全局的 dict_can_resize，标识是否允许resize
 void dictEnableResize(void) {
     dict_can_resize = 1;
 }
@@ -1167,6 +1205,7 @@ void dictDisableResize(void) {
     dict_can_resize = 0;
 }
 
+// 计算key的hash值
 uint64_t dictGetHash(dict *d, const void *key) {
     return dictHashKey(d, key);
 }
@@ -1198,6 +1237,7 @@ dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t h
 
 /* ------------------------------- Debugging ---------------------------------*/
 
+// 获取指定哈希表的状态信息(实体个数、桶个数、非空桶个数、平均每个非空桶的实体数量、不同实体个数对应的桶数量等信息)
 #define DICT_STATS_VECTLEN 50
 size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     // slots 非空桶的个数
@@ -1261,7 +1301,7 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     for (i = 0; i < DICT_STATS_VECTLEN-1; i++) {
         if (clvector[i] == 0) continue;
         if (l >= bufsize) break;
-        // 不同链长度 对应的桶个数
+        // 打印 每个链长度 对应的桶个数
         l += snprintf(buf+l,bufsize-l,
             "   %s%ld: %ld (%.02f%%)\n",
             (i == DICT_STATS_VECTLEN-1)?">= ":"",
@@ -1273,6 +1313,7 @@ size_t _dictGetStatsHt(char *buf, size_t bufsize, dictht *ht, int tableid) {
     return strlen(buf);
 }
 
+// 获取新旧两个哈希表的状态信息((实体个数、桶个数、非空桶个数、平均每个非空桶的实体数量、不同实体个数对应的桶数量等信息))
 void dictGetStats(char *buf, size_t bufsize, dict *d) {
     size_t l;
     char *orig_buf = buf;

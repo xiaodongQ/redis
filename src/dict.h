@@ -84,7 +84,7 @@ typedef struct dictht {
     unsigned long size;
     // size-1 用于计算hash值应该存放的位置 (hash & sizemask)
     unsigned long sizemask;
-    // 已使用的实体数量(键值对，冲突的键值对算多个)
+    // 实体数量(键值对，冲突的键值对算多个)
     unsigned long used;
 } dictht;
 
@@ -98,7 +98,7 @@ typedef struct dict {
     dictht ht[2];
     // rehash时要操作的下一个桶的下标 -1时表示未在进行rehash
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
-    // 当前使用的迭代器数量 类比STL，如果迭代器在使用的同时进行rehash，可能造成迭代器失效
+    // 当前使用的安全迭代器数量 类比STL，如果迭代器在使用的同时进行rehash，可能造成迭代器失效
     unsigned long iterators; /* number of iterators currently running */
 } dict;
 
@@ -177,7 +177,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 #define dictGetUnsignedIntegerVal(he) ((he)->v.u64)
 #define dictGetDoubleVal(he) ((he)->v.d)
 #define dictSlots(d) ((d)->ht[0].size+(d)->ht[1].size) // 字典的总桶数(新旧两个表加起来)
-#define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used)
+#define dictSize(d) ((d)->ht[0].used+(d)->ht[1].used) // 总实体数
 #define dictIsRehashing(d) ((d)->rehashidx != -1)
 
 /* API */
@@ -226,20 +226,30 @@ dictEntry *dictGetRandomKey(dict *d);
 dictEntry *dictGetFairRandomKey(dict *d);
 // 从字典中返回一些(count指定数量)随机的实体，保存在des中(二级指针，用来表示实体指针的数组)
 unsigned int dictGetSomeKeys(dict *d, dictEntry **des, unsigned int count);
+// 获取新旧两个哈希表的状态信息((实体个数、桶个数、非空桶个数、平均每个非空桶的实体数量、不同实体个数对应的桶数量等信息))
 void dictGetStats(char *buf, size_t bufsize, dict *d);
+// 对key进行siphash
 uint64_t dictGenHashFunction(const void *key, int len);
+// 对key进行siphash，key的字符都变为小写再计算
 uint64_t dictGenCaseHashFunction(const unsigned char *buf, int len);
+// 清理字典，传入的回调函数指针用来清理私有数据
 void dictEmpty(dict *d, void(callback)(void*));
+// 设置全局的 dict_can_resize为1，标识允许resize
 void dictEnableResize(void);
+// 设置全局的 dict_can_resize为0，标识不允许resize
 void dictDisableResize(void);
 // 渐进式rehash，把旧表映射到新表，分成n步进行
 // 返回1表示还有数据(key或者说key对应的桶)需要从旧表移动到新表，0表示没有
 int dictRehash(dict *d, int n);
 // 在给定时间内，循环执行rehash，每次100步
 int dictRehashMilliseconds(dict *d, int ms);
+// 设置hash seed
 void dictSetHashFunctionSeed(uint8_t *seed);
+// 获取hash seed
 uint8_t *dictGetHashFunctionSeed(void);
+// 遍历字典的所有元素
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
+// 计算key的hash值
 uint64_t dictGetHash(dict *d, const void *key);
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
 

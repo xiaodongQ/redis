@@ -194,6 +194,7 @@ uint64_t siphash_nocase(const uint8_t *in, const size_t inlen, const uint8_t *k)
     v0 ^= k0;
 
     for (; in != end; in += 8) {
+        // 变为小写
         m = U8TO64_LE_NOCASE(in);
         v3 ^= m;
 
