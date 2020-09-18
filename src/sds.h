@@ -42,36 +42,44 @@ extern const char *SDS_NOINIT;
 
 typedef char *sds;
 
+// sds类型头(其中包括了数据buf，数组指针)，根据成员 对齐字节数的不同 定义多个不同的sdshdr类型
+// __attribute__ 用于在数据或者函数声明中设定属性(对齐、取消对齐、函数无返回值等，便于编译器优化)
+// 下面的 __attribute__ ((__packed__)) 设置取消优化对齐，结构体按照实际的字节数对齐(1字节对齐，对域（field）是位对齐)
 /* Note: sdshdr5 is never used, we just access the flags byte directly.
  * However is here to document the layout of type 5 SDS strings. */
+// sdshdr5类型永远不会使用
 struct __attribute__ ((__packed__)) sdshdr5 {
     unsigned char flags; /* 3 lsb of type, and 5 msb of string length */
     char buf[];
 };
 
-// sds类型头(其中包括了数据buf，数组指针)，下面定义的几个sdshdr类型，根据对齐的长度进行不同类型区分
+// 8位(1个字节)对齐
 struct __attribute__ ((__packed__)) sdshdr8 {
     // 已使用长度
     uint8_t len; /* used */
-    // 分配的总长度(排除头和结束符外的总长度)
+    // 分配的总长度(排除头和结束符'\0'外的总长度)
     uint8_t alloc; /* excluding the header and null terminator */
-    // 类型，3个低bit位表示类型，5位没使用
+    // 类型，3个低bit位表示类型，5位没使用 (SDS_TYPE_MASK为7，111，标识5种类型)
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
-    // 具体存放字符的buf
+    // 字节数组，具体存放数据的buf
+    // 由于指定了__packed__属性，所以buf根据实际情况进行对齐，不占用空间？
     char buf[];
 };
+// 16位(2个字节)对齐
 struct __attribute__ ((__packed__)) sdshdr16 {
     uint16_t len; /* used */
     uint16_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
     char buf[];
 };
+// 32位(4个字节)对齐
 struct __attribute__ ((__packed__)) sdshdr32 {
     uint32_t len; /* used */
     uint32_t alloc; /* excluding the header and null terminator */
     unsigned char flags; /* 3 lsb of type, 5 unused bits */
     char buf[];
 };
+// 64位(8个字节)对齐
 struct __attribute__ ((__packed__)) sdshdr64 {
     uint64_t len; /* used */
     uint64_t alloc; /* excluding the header and null terminator */
@@ -274,8 +282,11 @@ void *sdsAllocPtr(sds s);
  * Sometimes the program SDS is linked to, may use a different set of
  * allocators, but may want to allocate or free things that SDS will
  * respectively free or allocate. */
+// 包装了一层 zmalloc，专用于sds的内存分配操作
 void *sds_malloc(size_t size);
+// 包装zrealloc
 void *sds_realloc(void *ptr, size_t size);
+// 包装zfree
 void sds_free(void *ptr);
 
 #ifdef REDIS_TEST

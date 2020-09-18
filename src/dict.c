@@ -1215,21 +1215,28 @@ uint64_t dictGetHash(dict *d, const void *key) {
  * the hash value should be provided using dictGetHash.
  * no string / key comparison is performed.
  * return value is the reference to the dictEntry if found, or NULL if not found. */
+// 根据 key指针 和 预先计算的hash值 查找对应的实体，返回指向实体的二级指针
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash) {
     dictEntry *he, **heref;
     unsigned long idx, table;
 
     if (dictSize(d) == 0) return NULL; /* dict is empty */
     for (table = 0; table <= 1; table++) {
+        // 传入hash值对应的桶索引
         idx = hash & d->ht[table].sizemask;
+        // 指向桶(二级指针)
         heref = &d->ht[table].table[idx];
+        // 桶
         he = *heref;
+        // 遍历该桶对应的链表
         while(he) {
+            // 实体
             if (oldptr==he->key)
                 return heref;
             heref = &he->next;
             he = *heref;
         }
+        // 没有在rehash则返回NULL，否则再去新表查询
         if (!dictIsRehashing(d)) return NULL;
     }
     return NULL;

@@ -57,6 +57,7 @@ static inline int sdsHdrSize(char type) {
     return 0;
 }
 
+// 根据申请的长度来分配不同的sds类型
 static inline char sdsReqType(size_t string_size) {
     if (string_size < 1<<5)
         return SDS_TYPE_5;
@@ -86,9 +87,13 @@ static inline char sdsReqType(size_t string_size) {
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
+// 使用 init中的内容 和 长度initlen 来创建一个新的 sds字符串
+// 如果init内容为 "SDS_NOINIT"，则只分配对应长度而不初始化内容
+// 所有的sds字符串都是以'\0'结束的，创建时会添加一个隐式的'\0'
 sds sdsnewlen(const void *init, size_t initlen) {
     void *sh;
     sds s;
+    // 根据长度自动调整分配的sds类型
     char type = sdsReqType(initlen);
     /* Empty strings are usually created in order to append. Use type 8
      * since type 5 is not good at this. */
@@ -1117,8 +1122,11 @@ sds sdsjoinsds(sds *argv, int argc, const char *sep, size_t seplen) {
  * the overhead of function calls. Here we define these wrappers only for
  * the programs SDS is linked to, if they want to touch the SDS internals
  * even if they use a different allocator. */
+// 包装了一层 zmalloc，专用于sds的内存分配操作
 void *sds_malloc(size_t size) { return s_malloc(size); }
+// 包装zrealloc
 void *sds_realloc(void *ptr, size_t size) { return s_realloc(ptr,size); }
+// 包装zfree
 void sds_free(void *ptr) { s_free(ptr); }
 
 #if defined(SDS_TEST_MAIN)

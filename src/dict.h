@@ -251,6 +251,7 @@ uint8_t *dictGetHashFunctionSeed(void);
 unsigned long dictScan(dict *d, unsigned long v, dictScanFunction *fn, dictScanBucketFunction *bucketfn, void *privdata);
 // 计算key的hash值
 uint64_t dictGetHash(dict *d, const void *key);
+// 根据 key指针 和 预先计算的hash值 查找对应的实体，返回指向实体的二级指针
 dictEntry **dictFindEntryRefByPtrAndHash(dict *d, const void *oldptr, uint64_t hash);
 
 /* Hash table types */
