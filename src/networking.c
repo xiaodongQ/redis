@@ -3067,16 +3067,20 @@ int tio_debug = 0;
 #define IO_THREADS_OP_READ 0
 #define IO_THREADS_OP_WRITE 1
 
+// 每个 IO 线程的描述符
 pthread_t io_threads[IO_THREADS_MAX_NUM];
 pthread_mutex_t io_threads_mutex[IO_THREADS_MAX_NUM];
+// 等待每个 IO 线程处理的客户端个数
 _Atomic unsigned long io_threads_pending[IO_THREADS_MAX_NUM];
 int io_threads_op;      /* IO_THREADS_OP_WRITE or IO_THREADS_OP_READ. */
 
 /* This is the list of clients each thread will serve when threaded I/O is
  * used. We spawn io_threads_num-1 threads, since one is the main thread
  * itself. */
+// 保存了每个 IO 线程要处理的客户端
 list *io_threads_list[IO_THREADS_MAX_NUM];
 
+// 线程处理函数
 void *IOThreadMain(void *myid) {
     /* The ID is the thread number (from 0 to server.iothreads_num-1), and is
      * used by the thread to just manipulate a single sub-array of clients. */
@@ -3084,18 +3088,26 @@ void *IOThreadMain(void *myid) {
     char thdname[16];
 
     snprintf(thdname, sizeof(thdname), "io_thd_%ld", id);
+    // pthread_setname_np 设置线程名
     redis_set_thread_title(thdname);
+    // 设置亲和性，配置项：server_cpulist，没配置则为NULL
     redisSetCpuAffinity(server.server_cpulist);
+    // pthread_setcancelstate 设置当前线程为 允许取消
+    // 且 pthread_setcanceltype 设置为异步取消，意味着线程可以在任何时刻响应取消请求
     makeThreadKillable();
 
     while(1) {
         /* Wait for start */
+        // 类似轻量级的自旋锁，等待主线程通知。减少不必要的加锁解锁
         for (int j = 0; j < 1000000; j++) {
             if (io_threads_pending[id] != 0) break;
         }
 
         /* Give the main thread a chance to stop this thread. */
+        // 没有要处理的客户端，continue
         if (io_threads_pending[id] == 0) {
+            // 线程外持锁了，此处lock会阻塞，直到外面通知unlock，此处lock就继续往下处理了
+            // 线程外通过lock操作，可以在没有客户端处理时，让线程阻塞等待，避免不必要的消耗
             pthread_mutex_lock(&io_threads_mutex[id]);
             pthread_mutex_unlock(&io_threads_mutex[id]);
             continue;
@@ -3109,18 +3121,24 @@ void *IOThreadMain(void *myid) {
          * before we drop the pending count to 0. */
         listIter li;
         listNode *ln;
+        // 获取IO线程要处理的客户端列表，让`li`指向链表头
         listRewind(io_threads_list[id],&li);
         while((ln = listNext(&li))) {
+            // 从客户端列表中获取一个客户端
             client *c = listNodeValue(ln);
             if (io_threads_op == IO_THREADS_OP_WRITE) {
+                // 将数据写回客户端
                 writeToClient(c,0);
             } else if (io_threads_op == IO_THREADS_OP_READ) {
+                // 从客户端读取数据
                 readQueryFromClient(c->conn);
             } else {
                 serverPanic("io_threads_op value is unknown");
             }
         }
+        // 处理完所有客户端后，清空该线程的客户端列表
         listEmpty(io_threads_list[id]);
+        // 将该线程的待处理任务数量设置为0
         io_threads_pending[id] = 0;
 
         if (tio_debug) printf("[%ld] Done\n", id);
@@ -3144,13 +3162,16 @@ void initThreadedIO(void) {
     /* Spawn and initialize the I/O threads. */
     for (int i = 0; i < server.io_threads_num; i++) {
         /* Things we do for all the threads including the main thread. */
+        // 创建一个双向队列
         io_threads_list[i] = listCreate();
+        // i == 0时不用创建新线程，是主线程
         if (i == 0) continue; /* Thread 0 is the main thread. */
 
         /* Things we do only for the additional threads. */
         pthread_t tid;
         pthread_mutex_init(&io_threads_mutex[i],NULL);
         io_threads_pending[i] = 0;
+        // 持锁。创建线程后，线程中再lock的话就会阻塞，直到其他地方unlock（startThreadedIO中）
         pthread_mutex_lock(&io_threads_mutex[i]); /* Thread will be stopped. */
         if (pthread_create(&tid,NULL,IOThreadMain,(void*)(long)i) != 0) {
             serverLog(LL_WARNING,"Fatal: Can't initialize IO thread.");
@@ -3182,6 +3203,7 @@ void startThreadedIO(void) {
     if (tio_debug) printf("--- STARTING THREADED IO ---\n");
     serverAssert(server.io_threads_active == 0);
     for (int j = 1; j < server.io_threads_num; j++)
+        // 解锁，在 initThreadedIO 中创建线程时就持锁了
         pthread_mutex_unlock(&io_threads_mutex[j]);
     server.io_threads_active = 1;
 }

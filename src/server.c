@@ -3045,7 +3045,9 @@ void initServer(void) {
  * Thread Local Storage initialization collides with dlopen call.
  * see: https://sourceware.org/bugzilla/show_bug.cgi?id=19329 */
 void InitServerLast() {
+    // 后台io线程
     bioInit();
+    // 多线程
     initThreadedIO();
     set_jemalloc_bg_thread(server.jemalloc_bg_thread);
     server.initial_memory_usage = zmalloc_used_memory();
@@ -5470,6 +5472,7 @@ int main(int argc, char **argv) {
     redisAsciiArt();
     checkTcpBacklogSettings();
 
+    // 非哨兵模式
     if (!server.sentinel_mode) {
         /* Things not needed when running in Sentinel mode. */
         serverLog(LL_WARNING,"Server initialized");
@@ -5494,6 +5497,7 @@ int main(int argc, char **argv) {
     #endif /* __linux__ */
         moduleLoadFromQueue();
         ACLLoadUsersAtStartup();
+        // 线程初始化
         InitServerLast();
         loadDataFromDisk();
         if (server.cluster_enabled) {
@@ -5533,6 +5537,7 @@ int main(int argc, char **argv) {
     redisSetCpuAffinity(server.server_cpulist);
     setOOMScoreAdj(-1);
 
+    // 事件循环
     aeMain(server.el);
     aeDeleteEventLoop(server.el);
     return 0;

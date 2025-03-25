@@ -97,6 +97,7 @@ sds sdsnewlen(const void *init, size_t initlen) {
     unsigned char *fp; /* flags pointer. */
 
     assert(initlen + hdrlen + 1 > initlen); /* Catch size_t overflow */
+    // s_malloc默认也是 zmalloc
     sh = s_malloc(hdrlen+initlen+1);
     if (sh == NULL) return NULL;
     if (init==SDS_NOINIT)
