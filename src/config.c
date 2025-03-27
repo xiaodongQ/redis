@@ -381,6 +381,7 @@ void loadServerConfigFromString(char *config) {
         if (lines[i][0] == '#' || lines[i][0] == '\0') continue;
 
         /* Split into arguments */
+        // 解析配置文件里面的每行内容
         argv = sdssplitargs(lines[i],&argc);
         if (argv == NULL) {
             err = "Unbalanced quotes in configuration line";
@@ -419,20 +420,25 @@ void loadServerConfigFromString(char *config) {
         }
 
         /* Execute config directives */
+        // bind配置项： 如 bind 192.168.1.100 10.0.0.1，支持多个ip绑定并监听
         if (!strcasecmp(argv[0],"bind") && argc >= 2) {
+            // 上面解析出来的内容个数，第一个是bind，后面依次空格分隔都是地址
             int j, addresses = argc-1;
 
             if (addresses > CONFIG_BINDADDR_MAX) {
                 err = "Too many bind addresses specified"; goto loaderr;
             }
             /* Free old bind addresses */
+            // 释放老的空间
             for (j = 0; j < server.bindaddr_count; j++) {
                 zfree(server.bindaddr[j]);
             }
             for (j = 0; j < addresses; j++)
                 server.bindaddr[j] = zstrdup(argv[j+1]);
+            // bind地址个数
             server.bindaddr_count = addresses;
         } else if (!strcasecmp(argv[0],"unixsocketperm") && argc == 2) {
+            // unixsocketperm 和 unixsocket，用于本机间的多进程通信
             errno = 0;
             server.unixsocketperm = (mode_t)strtol(argv[1], NULL, 8);
             if (errno || server.unixsocketperm > 0777) {

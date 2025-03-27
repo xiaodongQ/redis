@@ -488,6 +488,9 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;    /* No effect if bindaddr != NULL */
 
+    // anetTcpServer/anetTcp6Server 调用时传进来的 bindaddr 是 NULL
+    // getaddrinfo将一个主机名和服务名转换为一个或多个套接字地址结构，它屏蔽了不同网络协议（如 IPv4 和 IPv6）的差异，使得程序可以同时支持多种协议
+    // bindaddr表示主机名或 IP 地址的字符串，_port为端口，hints指定地址的一些属性，servinfo存储函数返回的地址信息链表
     if ((rv = getaddrinfo(bindaddr,_port,&hints,&servinfo)) != 0) {
         anetSetError(err, "%s", gai_strerror(rv));
         return ANET_ERR;
@@ -497,7 +500,9 @@ static int _anetTcpServer(char *err, int port, char *bindaddr, int af, int backl
             continue;
 
         if (af == AF_INET6 && anetV6Only(err,s) == ANET_ERR) goto error;
+        // 设置 SO_REUSEADDR
         if (anetSetReuseAddr(err,s) == ANET_ERR) goto error;
+        // 进行监听
         if (anetListen(err,s,p->ai_addr,p->ai_addrlen,backlog) == ANET_ERR) s = ANET_ERR;
         goto end;
     }

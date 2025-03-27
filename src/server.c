@@ -2717,12 +2717,15 @@ int listenToPort(int port, int *fds, int *count) {
 
     /* Force binding of 0.0.0.0 if no bind address is specified, always
      * entering the loop if j == 0. */
+    // config.c 里面的loadServerConfigFromString解析了bind配置项
     if (server.bindaddr_count == 0) server.bindaddr[0] = NULL;
     for (j = 0; j < server.bindaddr_count || j == 0; j++) {
+        // 没有指定bind地址，则IPV4和IPV6都监听
         if (server.bindaddr[j] == NULL) {
             int unsupported = 0;
             /* Bind * for both IPv6 and IPv4, we enter here only if
              * server.bindaddr_count == 0. */
+            // IPV6监听，其中 backlog对应tcp-backlog配置项，指定全连接队列长度
             fds[*count] = anetTcp6Server(server.neterr,port,NULL,
                 server.tcp_backlog);
             if (fds[*count] != ANET_ERR) {
@@ -2735,6 +2738,7 @@ int listenToPort(int port, int *fds, int *count) {
 
             if (*count == 1 || unsupported) {
                 /* Bind the IPv4 address as well. */
+                // IPV4监听
                 fds[*count] = anetTcpServer(server.neterr,port,NULL,
                     server.tcp_backlog);
                 if (fds[*count] != ANET_ERR) {
@@ -2770,6 +2774,7 @@ int listenToPort(int port, int *fds, int *count) {
                     continue;
             return C_ERR;
         }
+        // 设置非阻塞
         anetNonBlock(NULL,fds[*count]);
         (*count)++;
     }
@@ -2883,6 +2888,7 @@ void initServer(void) {
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
+    // ipfd是个数组
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
@@ -2978,6 +2984,7 @@ void initServer(void) {
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
+        // tcp句柄
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
             {
