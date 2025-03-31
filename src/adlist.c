@@ -116,6 +116,7 @@ list *listAddNodeTail(list *list, void *value)
 {
     listNode *node;
 
+    // 新建节点，并将其插入到链表尾部，若原链表list为空则本节点作为头节点及尾节点（双向链表）
     if ((node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;

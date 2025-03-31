@@ -1313,6 +1313,7 @@ struct redisServer {
     /* Replication (master) */
     char replid[CONFIG_RUN_ID_SIZE+1];  /* My current replication ID. */
     char replid2[CONFIG_RUN_ID_SIZE+1]; /* replid inherited from master*/
+    // 记录当前的最新写操作在 repl_backlog_buffer 中的位置
     long long master_repl_offset;   /* My current replication offset */
     long long second_replid_offset; /* Accept offsets up to this for replid2. */
     int slaveseldb;                 /* Last SELECTed DB in replication output */
@@ -1336,14 +1337,22 @@ struct redisServer {
                                      * see REPL_DISKLESS_LOAD_* enum */
     int repl_diskless_sync_delay;   /* Delay to start a diskless repl BGSAVE. */
     /* Replication (slave) */
+    // 用于和主库进行验证的用户名密码
     char *masteruser;               /* AUTH with this user and masterauth with master */
     char *masterauth;               /* AUTH with this password with master */
+    // 主库主机名
     char *masterhost;               /* Hostname of master */
+    // 主库端口号
     int masterport;                 /* Port of master */
+    // 超时时间
     int repl_timeout;               /* Timeout after N seconds of master idle */
+    // 从库上用来和主库连接的客户端
     client *master;     /* Client that is master for this slave */
+    // 从库上缓存的主库信息
     client *cached_master; /* Cached master to be reused for PSYNC. */
+    // 复制时同步IO的超时时间
     int repl_syncio_timeout; /* Timeout for synchronous I/O calls */
+    // 从库的复制状态机
     int repl_state;          /* Replication status if the instance is a slave */
     off_t repl_transfer_size; /* Size of RDB to read from master during sync. */
     off_t repl_transfer_read; /* Amount of RDB read from master during sync. */

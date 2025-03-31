@@ -195,6 +195,7 @@ static inline ssize_t connSyncRead(connection *conn, char *ptr, ssize_t size, lo
 }
 
 static inline ssize_t connSyncReadLine(connection *conn, char *ptr, ssize_t size, long long timeout) {
+    // connection.c里面定义了CT_Socket对应的默认函数指针，对应 connSocketSyncReadLine，其中会::poll等待读事件
     return conn->type->sync_readline(conn, ptr, size, timeout);
 }
 

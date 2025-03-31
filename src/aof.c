@@ -1624,16 +1624,21 @@ int rewriteAppendOnlyFileBackground(void) {
     pid_t childpid;
 
     if (hasActiveChildProcess()) return C_ERR;
+    // 创建管道
     if (aofCreatePipes() != C_OK) return C_ERR;
     openChildInfoPipe();
+    // fork
     if ((childpid = redisFork(CHILD_TYPE_AOF)) == 0) {
         char tmpfile[256];
 
         /* Child */
         redisSetProcTitle("redis-aof-rewrite");
+        // 绑定CPU，aof_rewrite_cpulist配置项默认未设置
         redisSetCpuAffinity(server.aof_rewrite_cpulist);
         snprintf(tmpfile,256,"temp-rewriteaof-bg-%d.aof", (int) getpid());
+        // 重写AOF
         if (rewriteAppendOnlyFile(tmpfile) == C_OK) {
+            // 写时复制
             sendChildCOWInfo(CHILD_TYPE_AOF, "AOF rewrite");
             exitFromChild(0);
         } else {
@@ -1653,6 +1658,7 @@ int rewriteAppendOnlyFileBackground(void) {
             "Background append only file rewriting started by pid %d",childpid);
         server.aof_rewrite_scheduled = 0;
         server.aof_rewrite_time_start = time(NULL);
+        // 记录子进程id
         server.aof_child_pid = childpid;
         updateDictResizePolicy();
         /* We set appendseldb to -1 in order to force the next call to the

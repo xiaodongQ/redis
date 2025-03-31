@@ -204,10 +204,14 @@ int lpStringToInt64(const char *s, unsigned long slen, int64_t *value) {
 /* Create a new, empty listpack.
  * On success the new listpack is returned, otherwise an error is returned. */
 unsigned char *lpNew(void) {
+    // 分配LP_HRD_SIZE+1
     unsigned char *lp = lp_malloc(LP_HDR_SIZE+1);
     if (lp == NULL) return NULL;
+    // 设置listpack的大小
     lpSetTotalBytes(lp,LP_HDR_SIZE+1);
+    // 设置listpack的元素个数，初始值为0
     lpSetNumElements(lp,0);
+    // 设置listpack的结尾标识为LP_EOF，值为255（0xFF）
     lp[LP_HDR_SIZE] = LP_EOF;
     return lp;
 }

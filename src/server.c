@@ -2041,6 +2041,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
 
     /* Replication cron function -- used to reconnect to master,
      * detect transfer failures, start background RDB transfers and so forth. */
+    // 用来连接主库，1s执行一次
     run_with_period(1000) replicationCron();
 
     /* Run the Redis Cluster cron. */
@@ -2135,6 +2136,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     handleBlockedClientsTimeout();
 
     /* We should handle pending reads clients ASAP after event loop. */
+    // 负责将 待读客户端（clients_pending_read） 分配给IO线程进行处理
     handleClientsWithPendingReadsUsingThreads();
 
     /* Handle TLS pending data. (must be done before flushAppendOnlyFile) */
@@ -2193,6 +2195,7 @@ void beforeSleep(struct aeEventLoop *eventLoop) {
     flushAppendOnlyFile(0);
 
     /* Handle writes with pending output buffers. */
+    // 负责将 待写客户端（clients_pending_write） 分配给IO线程进行处理
     handleClientsWithPendingWritesUsingThreads();
 
     /* Close clients that need to be closed asynchronous */
@@ -2558,6 +2561,7 @@ static void readOOMScoreAdj(void) {
  * A process_class value of -1 implies OOM_CONFIG_MASTER or OOM_CONFIG_REPLICA,
  * depending on current role.
  */
+// 设置 oom_score_adj
 int setOOMScoreAdj(int process_class) {
 
     if (server.oom_score_adj == OOM_SCORE_ADJ_NO) return C_OK;
@@ -2976,6 +2980,7 @@ void initServer(void) {
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
+    // 定时器
     if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         serverPanic("Can't create event loop timers.");
         exit(1);
@@ -2984,7 +2989,7 @@ void initServer(void) {
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
     for (j = 0; j < server.ipfd_count; j++) {
-        // tcp句柄
+        // 注册tcp socket句柄的读事件到事件循环里，并设置回调函数
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
             {
@@ -2992,6 +2997,7 @@ void initServer(void) {
                     "Unrecoverable error creating server.ipfd file event.");
             }
     }
+    // TLS/SSL层事件注册
     for (j = 0; j < server.tlsfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.tlsfd[j], AE_READABLE,
             acceptTLSHandler,NULL) == AE_ERR)
@@ -3000,12 +3006,14 @@ void initServer(void) {
                     "Unrecoverable error creating server.tlsfd file event.");
             }
     }
+    // unix socket 相关事件
     if (server.sofd > 0 && aeCreateFileEvent(server.el,server.sofd,AE_READABLE,
         acceptUnixHandler,NULL) == AE_ERR) serverPanic("Unrecoverable error creating server.sofd file event.");
 
 
     /* Register a readable event for the pipe used to awake the event loop
      * when a blocked client in a module needs attention. */
+    // 管道 相关事件
     if (aeCreateFileEvent(server.el, server.module_blocked_pipe[0], AE_READABLE,
         moduleBlockedClientPipeReadable,NULL) == AE_ERR) {
             serverPanic(
@@ -3343,6 +3351,7 @@ void preventCommandReplication(client *c) {
  * preventCommandReplication(client *c);
  *
  */
+// 核心执行逻辑
 void call(client *c, int flags) {
     long long dirty;
     ustime_t start, duration;
@@ -3575,6 +3584,7 @@ int processCommand(client *c) {
 
     /* Now lookup the command and check ASAP about trivial error conditions
      * such as wrong arity, bad command name and so forth. */
+    // 查找命令，并检查是否合法
     c->cmd = c->lastcmd = lookupCommand(c->argv[0]->ptr);
     if (!c->cmd) {
         sds args = sdsempty();
@@ -3791,6 +3801,7 @@ int processCommand(client *c) {
     }
 
     /* Exec the command */
+    // 执行命令
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)

@@ -552,6 +552,7 @@ static int anetGenericAccept(char *err, int s, struct sockaddr *sa, socklen_t *l
     while(1) {
         fd = accept(s,sa,len);
         if (fd == -1) {
+            // 由于句柄设置成了非阻塞，所以判断accept错误码非 EINTR 时才表示失败
             if (errno == EINTR)
                 continue;
             else {
@@ -571,6 +572,7 @@ int anetTcpAccept(char *err, int s, char *ip, size_t ip_len, int *port) {
     if ((fd = anetGenericAccept(err,s,(struct sockaddr*)&sa,&salen)) == -1)
         return ANET_ERR;
 
+    // 监听的客户端连接，ip和port通过传入的指针返回给外部
     if (sa.ss_family == AF_INET) {
         struct sockaddr_in *s = (struct sockaddr_in *)&sa;
         if (ip) inet_ntop(AF_INET,(void*)&(s->sin_addr),ip,ip_len);

@@ -1205,9 +1205,14 @@ int rdbSaveRio(rio *rdb, int *error, int rdbflags, rdbSaveInfo *rsi) {
 
     if (server.rdb_checksum)
         rdb->update_cksum = rioGenericUpdateChecksum;
+    // 魔数：RDDIS + RDB版本 进行拼接
     snprintf(magic,sizeof(magic),"REDIS%04d",RDB_VERSION);
+    // 写上述拼接内容到RDB文件中
     if (rdbWriteRaw(rdb,magic,9) == -1) goto werr;
+    // 保存一些RDB辅助信息到RDB文件，比如redis版本、时间戳、使用的内存量等等
     if (rdbSaveInfoAuxFields(rdb,rdbflags,rsi) == -1) goto werr;
+    // 保存 Redis 模块（Module）的辅助数据
+    // Redis 模块允许用户扩展 Redis 的功能，这些模块可能会有自己的内部状态或者需要持久化的数据
     if (rdbSaveModulesAux(rdb, REDISMODULE_AUX_BEFORE_RDB) == -1) goto werr;
 
     for (j = 0; j < server.dbnum; j++) {
@@ -1322,6 +1327,7 @@ int rdbSave(char *filename, rdbSaveInfo *rsi) {
     rio rdb;
     int error = 0;
 
+    // 先写临时文件
     snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
     fp = fopen(tmpfile,"w");
     if (!fp) {
@@ -1334,26 +1340,31 @@ int rdbSave(char *filename, rdbSaveInfo *rsi) {
             strerror(errno));
         return C_ERR;
     }
-
+    // rdb 和 fp文件句柄 绑定
     rioInitWithFile(&rdb,fp);
     startSaving(RDBFLAGS_NONE);
 
     if (server.rdb_save_incremental_fsync)
         rioSetAutoSync(&rdb,REDIS_AUTOSYNC_BYTES);
 
+    // 实际创建 RDB 文件并写内容
     if (rdbSaveRio(&rdb,&error,RDBFLAGS_NONE,rsi) == C_ERR) {
         errno = error;
         goto werr;
     }
 
     /* Make sure data will not remain on the OS's output buffers */
+    // 保证落盘
+    // fflush 是标准 C 库中的函数，其主要作用是刷新流（stream）的缓冲区
     if (fflush(fp)) goto werr;
+    // fsync 是系统调用，用强制将内核缓冲区中的数据立即写入磁盘
     if (fsync(fileno(fp))) goto werr;
     if (fclose(fp)) { fp = NULL; goto werr; }
     fp = NULL;
     
     /* Use RENAME to make sure the DB file is changed atomically only
      * if the generate DB file is ok. */
+    // 写完的临时RDB文件，rename替换配置项指定的RDB文件名称
     if (rename(tmpfile,filename) == -1) {
         char *cwdp = getcwd(cwd,MAXPATHLEN);
         serverLog(LL_WARNING,
@@ -1372,6 +1383,7 @@ int rdbSave(char *filename, rdbSaveInfo *rsi) {
     server.dirty = 0;
     server.lastsave = time(NULL);
     server.lastbgsave_status = C_OK;
+    // 信号通知结束
     stopSaving(1);
     return C_OK;
 
@@ -1390,6 +1402,7 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
 
     server.dirty_before_bgsave = server.dirty;
     server.lastbgsave_try = time(NULL);
+    // pipe初始化管道，`server.child_info_pipe`
     openChildInfoPipe();
 
     if ((childpid = redisFork(CHILD_TYPE_RDB)) == 0) {
@@ -1397,9 +1410,11 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
 
         /* Child */
         redisSetProcTitle("redis-rdb-bgsave");
+        // 绑定CPU，bgsave_cpulist配置项默认未设置
         redisSetCpuAffinity(server.bgsave_cpulist);
         retval = rdbSave(filename,rsi);
         if (retval == C_OK) {
+            // 其中通过管道进行数据通信
             sendChildCOWInfo(CHILD_TYPE_RDB, "RDB");
         }
         exitFromChild((retval == C_OK) ? 0 : 1);
@@ -1414,6 +1429,7 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
         }
         serverLog(LL_NOTICE,"Background saving started by pid %d",childpid);
         server.rdb_save_time_start = time(NULL);
+        // 记录写RDB文件的子进程id
         server.rdb_child_pid = childpid;
         server.rdb_child_type = RDB_CHILD_TYPE_DISK;
         updateDictResizePolicy();
@@ -2653,12 +2669,14 @@ int rdbSaveToSlavesSockets(rdbSaveInfo *rsi) {
 }
 
 void saveCommand(client *c) {
+    // 已经有子进程id了，说明有bgsave任务在执行当中
     if (server.rdb_child_pid != -1) {
         addReplyError(c,"Background save already in progress");
         return;
     }
     rdbSaveInfo rsi, *rsiptr;
     rsiptr = rdbPopulateSaveInfo(&rsi);
+    // 进行rdb文件保存，传入的rdb_filename由配置项 dbfilename 确定
     if (rdbSave(server.rdb_filename,rsiptr) == C_OK) {
         addReply(c,shared.ok);
     } else {

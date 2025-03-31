@@ -68,6 +68,7 @@ ssize_t syncWrite(int fd, char *ptr, ssize_t size, long long timeout) {
         if (size == 0) return ret;
 
         /* Wait */
+        // epoll等待写事件，对于syncWrite来说就是同步阻塞等待，没写完就继续写，直到本次数据都发送完成
         aeWait(fd,AE_WRITABLE,wait);
         elapsed = mstime() - start;
         if (elapsed >= timeout) {

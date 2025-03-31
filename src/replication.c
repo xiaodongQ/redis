@@ -837,6 +837,7 @@ void syncCommand(client *c) {
              * diskless replication) and we don't have a BGSAVE in progress,
              * let's start one. */
             if (!hasActiveChildProcess()) {
+                // 开始通过 bgsave 用于RDB复制
                 startBgsaveForReplication(c->slave_capa);
             } else {
                 serverLog(LL_NOTICE,
@@ -1861,6 +1862,7 @@ char *sendSynchronousCommand(int flags, connection *conn, ...) {
         sdsfree(cmdargs);
 
         /* Transfer command to the server. */
+        // 保证一次性write发完，::poll同步等待写
         if (connSyncWrite(conn,cmd,sdslen(cmd),server.repl_syncio_timeout*1000)
             == -1)
         {
@@ -1872,6 +1874,7 @@ char *sendSynchronousCommand(int flags, connection *conn, ...) {
     }
 
     /* Read the reply from the server. */
+    // 如果入参指定了读，则读取应答
     if (flags & SYNC_CMD_READ) {
         char buf[256];
 
@@ -1941,6 +1944,7 @@ char *sendSynchronousCommand(int flags, connection *conn, ...) {
 #define PSYNC_FULLRESYNC 3
 #define PSYNC_NOT_SUPPORTED 4
 #define PSYNC_TRY_LATER 5
+// 从库向主库发送命令，并根据应答判断处理
 int slaveTryPartialResynchronization(connection *conn, int read_reply) {
     char *psync_replid;
     char psync_offset[32];
@@ -1961,6 +1965,7 @@ int slaveTryPartialResynchronization(connection *conn, int read_reply) {
             serverLog(LL_NOTICE,"Trying a partial resynchronization (request %s:%s).", psync_replid, psync_offset);
         } else {
             serverLog(LL_NOTICE,"Partial resynchronization not possible (no cached master)");
+            // 第一次发送psync，命令为：`psync ? -1`
             psync_replid = "?";
             memcpy(psync_offset,"-1",3);
         }
@@ -1977,6 +1982,7 @@ int slaveTryPartialResynchronization(connection *conn, int read_reply) {
     }
 
     /* Reading half */
+    // 接收应答
     reply = sendSynchronousCommand(SYNC_CMD_READ,conn,NULL);
     if (sdslen(reply) == 0) {
         /* The master may send empty newlines after it receives PSYNC
@@ -1987,6 +1993,7 @@ int slaveTryPartialResynchronization(connection *conn, int read_reply) {
 
     connSetReadHandler(conn, NULL);
 
+    // 对应答进行判断处理
     if (!strncmp(reply,"+FULLRESYNC",11)) {
         char *replid = NULL, *offset = NULL;
 
@@ -2122,21 +2129,27 @@ void syncWithMaster(connection *conn) {
     }
 
     /* Send a PING to check the master is able to reply without errors. */
+    // 从库和主库连接成功后，回调本函数，根据状态机状态会先调用到本语句块
+    // 1、和主库连接成功，设置状态机 REPL_STATE_RECEIVE_PONG
     if (server.repl_state == REPL_STATE_CONNECTING) {
         serverLog(LL_NOTICE,"Non blocking connect for SYNC fired the event.");
         /* Delete the writable event so that the readable event remains
          * registered and we can wait for the PONG reply. */
+        // 注册读事件到epoll，读回调还是 syncWithMaster
         connSetReadHandler(conn, syncWithMaster);
         connSetWriteHandler(conn, NULL);
+        // 和主库创建连接成功后，设置状态机状态为 REPL_STATE_RECEIVE_PONG
         server.repl_state = REPL_STATE_RECEIVE_PONG;
         /* Send the PING, don't check for errors at all, we have the timeout
          * that will take care about this. */
+        // 发送 PING 消息给主库，同步阻塞发送数据，内部会持续::poll等待写事件以确保本次消息都发送完成
         err = sendSynchronousCommand(SYNC_CMD_WRITE,conn,"PING",NULL);
         if (err) goto write_error;
         return;
     }
 
     /* Receive the PONG command. */
+    // 2、触发了读回调，设置状态机 REPL_STATE_SEND_AUTH
     if (server.repl_state == REPL_STATE_RECEIVE_PONG) {
         err = sendSynchronousCommand(SYNC_CMD_READ,conn,NULL);
 
@@ -2162,6 +2175,7 @@ void syncWithMaster(connection *conn) {
     }
 
     /* AUTH with the master if required. */
+    // 3、鉴权，设置状态机 REPL_STATE_SEND_PORT
     if (server.repl_state == REPL_STATE_SEND_AUTH) {
         if (server.masteruser && server.masterauth) {
             err = sendSynchronousCommand(SYNC_CMD_WRITE,conn,"AUTH",
@@ -2249,6 +2263,7 @@ void syncWithMaster(connection *conn) {
                                 "REPLCONF ip-address: %s", err);
         }
         sdsfree(err);
+        // 发送容量
         server.repl_state = REPL_STATE_SEND_CAPA;
     }
 
@@ -2268,6 +2283,7 @@ void syncWithMaster(connection *conn) {
     }
 
     /* Receive CAPA reply. */
+    // 上面初始化好了连接，从库读取完了主库返回的 CAPA 消息响应，从库状态变为：REPL_STATE_SEND_PSYNC，表示要开始发psync命令进行数据同步了
     if (server.repl_state == REPL_STATE_RECEIVE_CAPA) {
         err = sendSynchronousCommand(SYNC_CMD_READ,conn,NULL);
         /* Ignore the error if any, not all the Redis versions support
@@ -2286,6 +2302,7 @@ void syncWithMaster(connection *conn) {
      * and the global offset, to try a partial resync at the next
      * reconnection attempt. */
     if (server.repl_state == REPL_STATE_SEND_PSYNC) {
+        // 向主库发送 PSYNC 命令
         if (slaveTryPartialResynchronization(conn,0) == PSYNC_WRITE_ERROR) {
             err = sdsnew("Write error sending the PSYNC command.");
             goto write_error;
@@ -2397,6 +2414,7 @@ write_error: /* Handle sendSynchronousCommand(SYNC_CMD_WRITE) errors. */
 }
 
 int connectWithMaster(void) {
+    // 是否启用TLS
     server.repl_transfer_s = server.tls_replication ? connCreateTLS() : connCreateSocket();
     if (connConnect(server.repl_transfer_s, server.masterhost, server.masterport,
                 NET_FIRST_BIND_ADDR, syncWithMaster) == C_ERR) {
@@ -2465,6 +2483,7 @@ void replicationSetMaster(char *ip, int port) {
     int was_master = server.masterhost == NULL;
 
     sdsfree(server.masterhost);
+    // 记录主库信息
     server.masterhost = sdsnew(ip);
     server.masterport = port;
     if (server.master) {
@@ -2473,6 +2492,7 @@ void replicationSetMaster(char *ip, int port) {
     disconnectAllBlockedClients(); /* Clients blocked in master, now slave. */
 
     /* Update oom_score_adj */
+    // 设置 oom_score_adj，-1则将进程的 OOM 分数调整为最低，使其不太可能被 OOM killer 选中而终止
     setOOMScoreAdj(-1);
 
     /* Force our slaves to resync with us as well. They may hopefully be able
@@ -2496,7 +2516,7 @@ void replicationSetMaster(char *ip, int port) {
         moduleFireServerEvent(REDISMODULE_EVENT_MASTER_LINK_CHANGE,
                               REDISMODULE_SUBEVENT_MASTER_LINK_DOWN,
                               NULL);
-
+    // 从库状态设置状态为 REPL_STATE_CONNECT
     server.repl_state = REPL_STATE_CONNECT;
 }
 
@@ -2576,6 +2596,7 @@ void replicationHandleMasterDisconnection(void) {
 void replicaofCommand(client *c) {
     /* SLAVEOF is not allowed in cluster mode as replication is automatically
      * configured using the current address of the master node. */
+    // cluster-enabled 配置项
     if (server.cluster_enabled) {
         addReplyError(c,"REPLICAOF not allowed in cluster mode.");
         return;
@@ -2608,6 +2629,7 @@ void replicaofCommand(client *c) {
             return;
 
         /* Check if we are already attached to the specified slave */
+        // 检查是否已记录主库信息，如果已经记录了，那么直接返回连接已建立的消息
         if (server.masterhost && !strcasecmp(server.masterhost,c->argv[1]->ptr)
             && server.masterport == port) {
             serverLog(LL_NOTICE,"REPLICAOF would result into synchronization "
@@ -2619,6 +2641,7 @@ void replicaofCommand(client *c) {
         }
         /* There was no previous master or the user specified a different one,
          * we can continue. */
+        // 设置主库操作
         replicationSetMaster(c->argv[1]->ptr, port);
         sds client = catClientInfoString(sdsempty(),c);
         serverLog(LL_NOTICE,"REPLICAOF %s:%d enabled (user request from '%s')",
@@ -3106,6 +3129,7 @@ long long replicationGetSlaveOffset(void) {
 /* --------------------------- REPLICATION CRON  ---------------------------- */
 
 /* Replication cron function, called 1 time per second. */
+// 检查从库的复制状态机状态，并进行相应操作
 void replicationCron(void) {
     static long long replication_cron_loops = 0;
 
@@ -3136,6 +3160,7 @@ void replicationCron(void) {
     }
 
     /* Check if we should connect to a MASTER */
+    // 从节点执行replicaof后，状态就是 REPL_STATE_CONNECT，此时还没有连接主库
     if (server.repl_state == REPL_STATE_CONNECT) {
         serverLog(LL_NOTICE,"Connecting to MASTER %s:%d",
             server.masterhost, server.masterport);
