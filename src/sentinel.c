@@ -484,6 +484,7 @@ void initSentinel(void) {
         int retval;
         struct redisCommand *cmd = sentinelcmds+j;
 
+        // 额外设置 sentinelcmds 里的命令到commands，和普通server相同的命令则会修改对应的处理函数
         retval = dictAdd(server.commands, sdsnew(cmd->name), cmd);
         serverAssert(retval == DICT_OK);
 
@@ -513,6 +514,7 @@ void initSentinel(void) {
 void sentinelIsRunning(void) {
     int j;
 
+    // 确认哨兵实例的配置文件存在并且可以正常写入，不满足则会报错退出
     if (server.configfile == NULL) {
         serverLog(LL_WARNING,
             "Sentinel started without a config file. Exiting...");
@@ -527,6 +529,7 @@ void sentinelIsRunning(void) {
     /* If this Sentinel has yet no ID set in the configuration file, we
      * pick a random one and persist the config on disk. From now on this
      * will be this Sentinel ID across restarts. */
+    // 哨兵实例是否设置了 ID，没有则设置一个，比如：bc3daf508b4407953522a5455aa470a80e056cd5
     for (j = 0; j < CONFIG_RUN_ID_SIZE; j++)
         if (sentinel.myid[j] != 0) break;
 
@@ -541,6 +544,7 @@ void sentinelIsRunning(void) {
 
     /* We want to generate a +monitor event for every configured master
      * at startup. */
+    // 给每个被监听的主节点发送事件信息
     sentinelGenerateInitialMonitorEvents();
 }
 

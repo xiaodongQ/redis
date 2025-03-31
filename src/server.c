@@ -2444,6 +2444,7 @@ void initServerConfig(void) {
      * redis.conf using the rename-command directive. */
     server.commands = dictCreate(&commandTableDictType,NULL);
     server.orig_commands = dictCreate(&commandTableDictType,NULL);
+    // 把 redisCommandTable 中定义的命令添加到 server.commands 中
     populateCommandTable();
     server.delCommand = lookupCommandByCString("del");
     server.multiCommand = lookupCommandByCString("multi");
@@ -3147,6 +3148,7 @@ void populateCommandTable(void) {
             serverPanic("Unsupported command flag");
 
         c->id = ACLGetCommandID(c->name); /* Assign the ID used for ACL. */
+        // 新增命令到 server.commands 中
         retval1 = dictAdd(server.commands, sdsnew(c->name), c);
         /* Populate an additional dictionary that will be unaffected
          * by rename-command statements in redis.conf. */
@@ -5178,8 +5180,10 @@ void memtest(size_t megabytes, int passes);
 int checkForSentinelMode(int argc, char **argv) {
     int j;
 
+    // 方式1：./redis-sentinel 方式启动
     if (strstr(argv[0],"redis-sentinel") != NULL) return 1;
     for (j = 1; j < argc; j++)
+        // 方式2：./redis-server --sentinel 方式启动
         if (!strcmp(argv[j],"--sentinel")) return 1;
     return 0;
 }
@@ -5368,7 +5372,9 @@ int main(int argc, char **argv) {
     uint8_t hashseed[16];
     getRandomBytes(hashseed,sizeof(hashseed));
     dictSetHashFunctionSeed(hashseed);
+    // 检查是否是哨兵模式启动
     server.sentinel_mode = checkForSentinelMode(argc,argv);
+    // 初始化服务配置，里面会把 redisCommandTable 中定义的命令添加到 server.commands 中
     initServerConfig();
     ACLInit(); /* The ACL subsystem must be initialized ASAP because the
                   basic networking code and client creation depends on it. */
@@ -5386,7 +5392,10 @@ int main(int argc, char **argv) {
      * in sentinel mode will have the effect of populating the sentinel
      * data structures with master nodes to monitor. */
     if (server.sentinel_mode) {
+        // 初始化配置项，默认启动端口是 26379
         initSentinelConfig();
+        // 哨兵服务初始化
+        // 其中会额外设置 sentinelcmds 里的命令到commands，和普通server相同的命令则会修改对应的处理函数
         initSentinel();
     }
 
@@ -5517,6 +5526,7 @@ int main(int argc, char **argv) {
         ACLLoadUsersAtStartup();
         // 线程初始化
         InitServerLast();
+        // 加载 RDB or AOF 数据到内存
         loadDataFromDisk();
         if (server.cluster_enabled) {
             if (verifyClusterConfigWithData() == C_ERR) {
@@ -5540,6 +5550,7 @@ int main(int argc, char **argv) {
         }
     } else {
         InitServerLast();
+        // 哨兵服务启动
         sentinelIsRunning();
         if (server.supervised_mode == SUPERVISED_SYSTEMD) {
             redisCommunicateSystemd("STATUS=Ready to accept connections\n");
@@ -5553,6 +5564,7 @@ int main(int argc, char **argv) {
     }
 
     redisSetCpuAffinity(server.server_cpulist);
+    // 调整oom_score_adj，不让系统OOM
     setOOMScoreAdj(-1);
 
     // 事件循环
