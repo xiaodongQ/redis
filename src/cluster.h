@@ -146,10 +146,14 @@ typedef struct clusterState {
     int size;             /* Num of master nodes with at least one slot */
     dict *nodes;          /* Hash table of name -> clusterNode structures */
     dict *nodes_black_list; /* Nodes we don't re-add for a few seconds. */
+    // 当前节点负责的 slot 正在迁往哪个节点
     clusterNode *migrating_slots_to[CLUSTER_SLOTS];
+    // 当前节点正在从哪个节点迁入某个 slot
     clusterNode *importing_slots_from[CLUSTER_SLOTS];
+    // 16384 个 slot 分别是由哪个节点负责的
     clusterNode *slots[CLUSTER_SLOTS];
     uint64_t slots_keys_count[CLUSTER_SLOTS];
+    // rax字典树，记录 slot 和 key 的对应关系，可以通过它快速找到 slot 上有哪些 keys
     rax *slots_to_keys;
     /* The following fields are used to take the slave state on elections. */
     mstime_t failover_auth_time; /* Time of previous or next election. */
