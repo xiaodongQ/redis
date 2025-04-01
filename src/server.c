@@ -2050,6 +2050,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     }
 
     /* Run the Sentinel timer if we are in sentinel mode. */
+    // 哨兵相关的定期执行，里面进行主观、客观下线和主库切换等逻辑
     if (server.sentinel_mode) sentinelTimer();
 
     /* Cleanup expired MIGRATE cached sockets. */

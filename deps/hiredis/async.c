@@ -145,6 +145,7 @@ redisAsyncContext *redisAsyncConnectWithOptions(const redisOptions *options) {
     redisContext *c;
     redisAsyncContext *ac;
 
+    // 设置非阻塞
     myOptions.options |= REDIS_OPT_NONBLOCK;
     c = redisConnectWithOptions(&myOptions);
     if (c == NULL) {
